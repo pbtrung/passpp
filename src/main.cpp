@@ -14,6 +14,7 @@ using namespace CryptoPP;
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
+const unsigned int PASS_LEN = 20;
 const unsigned int KEY_FILE_SIZE = 1024;
 const unsigned int TWEAK_SIZE = 16;
 const unsigned int HASH_KEY_SIZE = 64;
@@ -123,7 +124,8 @@ SecByteBlock encrypt(SecByteBlock data, char *keyf) {
         AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
         Threefish1024::Encryption t3f(&hkdf_hash[0], ENC_KEY_SIZE);
         t3f.SetTweak(params);
-        CBC_CTS_Mode_ExternalCipher::Encryption enc(t3f, &hkdf_hash[ENC_KEY_SIZE]);
+        CBC_CTS_Mode_ExternalCipher::Encryption enc(t3f,
+                                                    &hkdf_hash[ENC_KEY_SIZE]);
         StreamTransformationFilter stf(
             enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
         stf.Put(data, data.size());
@@ -159,7 +161,8 @@ SecByteBlock decrypt(SecByteBlock data, char *keyf) {
         AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
         Threefish1024::Decryption t3f(&hkdf_hash[0], ENC_KEY_SIZE);
         t3f.SetTweak(params);
-        CBC_CTS_Mode_ExternalCipher::Decryption dec(t3f, &hkdf_hash[ENC_KEY_SIZE]);
+        CBC_CTS_Mode_ExternalCipher::Decryption dec(t3f,
+                                                    &hkdf_hash[ENC_KEY_SIZE]);
         StreamTransformationFilter stf(dec, new ArraySink(buf, buf.size()));
         stf.Put(&data[HASH_SIZE + SALT_SIZE], buf.size());
         stf.MessageEnd();
@@ -243,13 +246,47 @@ void show(char *dbf, char *keyf, char *dId) {
             std::string j = std::string(
                 reinterpret_cast<const char *>(buf.data()), buf.size());
             json js = json::parse(j);
-            std::cout << "username: " + js["username"].get<std::string>() << std::endl;
-            std::cout << "password: " + js["password"].get<std::string>() << std::endl;
+            std::cout << "username: " + js["username"].get<std::string>()
+                      << std::endl;
+            std::cout << "password: " + js["password"].get<std::string>()
+                      << std::endl;
             std::cout << "note: " + js["note"].get<std::string>() << std::endl;
         }
 
         // Commit transaction
         transaction.commit();
+    } catch (const Exception &ex) {
+        std::cerr << ex.what() << std::endl;
+        exit(-1);
+    }
+}
+
+void generate(char *un, char *file) {
+    try {
+        SecByteBlock pass(PASS_LEN);
+        OS_GenerateRandomBlock(false, pass, pass.size());
+
+        std::string encoded;
+        StringSource ss(pass, pass.size(), true,
+                        new Base64URLEncoder(new StringSink(encoded), false));
+        json j;
+        j["username"] = un;
+        j["password"] = encoded;
+        j["note"] = "";
+        j["pad"] = "";
+
+        std::string data = j.dump(4);
+        if (data.size() < BLOCK_SIZE + 2) {
+            SecByteBlock tmp(BLOCK_SIZE + 2 - data.size());
+            OS_GenerateRandomBlock(false, tmp, tmp.size());
+            std::string pad;
+            StringSource sss(tmp, tmp.size(), true,
+                             new Base64URLEncoder(new StringSink(pad), false));
+            j["pad"] = pad;
+        }
+
+        std::ofstream o(file);
+        o << j.dump(4) << std::endl;
     } catch (const Exception &ex) {
         std::cerr << ex.what() << std::endl;
         exit(-1);
@@ -270,6 +307,9 @@ int main(int argc, char *argv[]) {
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
                strcmp(argv[6], "-dId") == 0) {
         show(argv[3], argv[5], argv[7]);
+    } else if (argc == 5 && strcmp(argv[1], "gen") == 0 &&
+               strcmp(argv[2], "-u") == 0) {
+        generate(argv[3], argv[4]);
     } else {
         error_exit("[main] Wrong argv");
     }
