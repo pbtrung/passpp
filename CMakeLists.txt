@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(passpp VERSION 99)
+project(passpp VERSION 0.9999)
 
 # SQLiteCpp
 set(CMAKE_CXX_STANDARD 11)
