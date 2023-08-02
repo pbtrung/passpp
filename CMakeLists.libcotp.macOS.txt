@@ -18,11 +18,11 @@ add_subdirectory(tests)
 set(CMAKE_C_STANDARD 11)
 
 set(COTP_HEADERS
-        src/cotp.h
+        ${PROJECT_SOURCE_DIR}/src/cotp.h
         )
 set(SOURCE_FILES
-        src/otp.c
-        src/utils/base32.c
+        ${PROJECT_SOURCE_DIR}/src/otp.c
+        ${PROJECT_SOURCE_DIR}/src/utils/base32.c
         )
 
 # Set compiler flags for all targets
@@ -30,9 +30,9 @@ add_compile_options(-Wall -Wextra -O3 -Wformat=2 -Wmissing-format-attribute -fst
         -fdiagnostics-color=always -Wstrict-prototypes -Wunreachable-code -Wchar-subscripts -Wwrite-strings -Wpointer-arith -Wbad-function-cast
         -Wcast-align -Werror=format-security -Werror=implicit-function-declaration -Wno-sign-compare -Wno-format-nonliteral -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3)
 
-add_library(cotp ${SOURCE_FILES})
-
+add_library(cotp ${SOURCE_FILES} ${COTP_HEADERS})
 target_link_libraries(cotp ${GCRYPT_LIBRARIES})
+target_include_directories(cotp PUBLIC ${PROJECT_SOURCE_DIR}/src)
 
 set_target_properties(cotp PROPERTIES VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 
@@ -66,4 +66,3 @@ endif()
 
 configure_file("cotp.pc.in" "cotp.pc" @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/cotp.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig/)
-

@@ -14,6 +14,8 @@ using namespace CryptoPP;
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
+#include <cotp.h>
+
 const unsigned int PASS_LEN = 20;
 const unsigned int KEY_FILE_SIZE = 1024;
 const unsigned int TWEAK_SIZE = 16;
@@ -296,6 +298,11 @@ void generate(char *un, char *file) {
 int main(int argc, char *argv[]) {
     if (argc == 3 && strcmp(argv[1], "init") == 0) {
         init(argv[2]);
+
+        // cotp_error_t err;
+        // const char *K = "JBSWY3DPEHPK3PXP";
+        // char *totp = get_totp (K, 6, 30, SHA1, &err);
+        // std::cout << totp << std::endl;
     } else if (argc == 5 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0) {
         add(argv[3], argv[4]);
