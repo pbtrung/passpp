@@ -13,6 +13,9 @@ set(CRYPTOPP_BUILD_TESTING OFF)
 add_subdirectory(vendors/cryptopp-cmake)
 # libcotp
 add_subdirectory(vendors/libcotp)
+# json
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+add_subdirectory(vendors/json)
 
 add_executable(passpp src/main.cpp)
-target_link_libraries(passpp SQLiteCpp sqlite3 pthread dl cryptopp cotp)
+target_link_libraries(passpp SQLiteCpp sqlite3 pthread dl cryptopp cotp nlohmann_json::nlohmann_json)

@@ -1,10 +1,11 @@
 #!/bin/bash
 
 cp CMakeLists.libcotp.macOS.txt vendors/libcotp/CMakeLists.txt
+cp CMakeLists.sqlite3.macOS.txt vendors/SQLiteCpp/sqlite3/CMakeLists.txt
 
 # new build
 if [ "$1" == "new" ]; then
-    rm -rf build/release
+    # rm -rf build/release
     cmake -S . -B build/release -D CMAKE_BUILD_TYPE=Release
     cd build/release
     make
@@ -17,3 +18,4 @@ elif [ "$1" == "con" ]; then
 fi
 
 cp CMakeLists.libcotp.bak.txt vendors/libcotp/CMakeLists.txt
+cp CMakeLists.sqlite3.bak.txt vendors/SQLiteCpp/sqlite3/CMakeLists.txt
