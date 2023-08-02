@@ -1,0 +1,9 @@
+[submodule "vendors/cryptopp-cmake"]
+	path = vendors/cryptopp-cmake
+	url = https://github.com/abdes/cryptopp-cmake
+[submodule "vendors/libcotp"]
+	path = vendors/libcotp
+	url = https://github.com/paolostivanin/libcotp
+[submodule "vendors/SQLiteCpp"]
+	path = vendors/SQLiteCpp
+	url = https://github.com/SRombauts/SQLiteCpp
