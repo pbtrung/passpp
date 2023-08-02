@@ -297,6 +297,7 @@ void generate(char *un, char *file) {
 
 int main(int argc, char *argv[]) {
     if (argc == 3 && strcmp(argv[1], "init") == 0) {
+        // passpp init passpp.db
         init(argv[2]);
 
         // cotp_error_t err;
@@ -305,17 +306,21 @@ int main(int argc, char *argv[]) {
         // std::cout << totp << std::endl;
     } else if (argc == 5 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0) {
+        // passpp add -db abc.db abc.com
         add(argv[3], argv[4]);
     } else if (argc == 9 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
                strcmp(argv[6], "-dId") == 0) {
+        // passpp add -db abc.db -k abc.key -dId 1 abc.json
         add(argv[3], argv[5], argv[7], argv[8]);
     } else if (argc == 8 && strcmp(argv[1], "show") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
                strcmp(argv[6], "-dId") == 0) {
+        // passpp show -db abc.db -k abc.key -dId 1
         show(argv[3], argv[5], argv[7]);
     } else if (argc == 5 && strcmp(argv[1], "gen") == 0 &&
                strcmp(argv[2], "-u") == 0) {
+        // passpp gen -u abc@def.com def.json
         generate(argv[3], argv[4]);
     } else {
         error_exit("[main] Wrong argv");
