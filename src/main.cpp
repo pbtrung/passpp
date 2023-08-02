@@ -297,7 +297,7 @@ void generate(char *un, char *file) {
 
 int main(int argc, char *argv[]) {
     if (argc == 3 && strcmp(argv[1], "init") == 0) {
-        // passpp init passpp.db
+        // passpp init abc.db
         init(argv[2]);
 
         // cotp_error_t err;
