@@ -83,7 +83,8 @@ void init(char *dbf) {
             "CREATE TABLE user (uId INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, hash BLOB NOT NULL, value BLOB NOT NULL)");
         db.exec("CREATE UNIQUE INDEX idx_user ON user(name)");
         db.exec(
-            "CREATE TABLE entry (eId INTEGER PRIMARY KEY, uId INTEGER NOT NULL, value TEXT NOT NULL, FOREIGN KEY(uId) REFERENCES user(uId))");
+            "CREATE TABLE entry (eId INTEGER PRIMARY KEY, uId INTEGER NOT NULL, name TEXT NOT NULL, FOREIGN KEY(uId) REFERENCES user(uId))");
+        db.exec("CREATE UNIQUE INDEX idx_entry ON entry(value)");
         db.exec(
             "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES data(eId))");
         db.exec(
@@ -166,17 +167,20 @@ std::string get_pass() {
     return p1;
 }
 
-char *hash_pwd(std::string pass) {
+std::string hash_pwd(std::string pass) {
     size_t encodedlen = argon2_encodedlen(T_COST, M_COST, P_COST, SALT_SIZE,
                                           HASH_SIZE, Argon2_id);
+
     uint8_t *pwd = (uint8_t *)strdup(pass.data());
     uint32_t pwdlen = strlen((char *)pwd);
     SecByteBlock salt(SALT_SIZE);
     OS_GenerateRandomBlock(false, salt, salt.size());
 
-    char *hash = (char *)malloc(encodedlen);
+    std::string hash(encodedlen, ' ');
     argon2id_hash_encoded(T_COST, M_COST, P_COST, pwd, pwdlen, salt,
-                          salt.size(), HASH_SIZE, hash, encodedlen);
+                          salt.size(), HASH_SIZE, (char *)hash.data(),
+                          encodedlen);
+
     CryptoPP::SecureWipeBuffer(pwd, pwdlen);
     return hash;
 }
@@ -200,14 +204,14 @@ void add_user(char *dbf, char *name) {
     OS_GenerateRandomBlock(false, salt, salt.size());
 
     std::string pass = get_pass();
-    char *hash_encoded = hash_pwd(pass);
+    std::string hash_encoded = hash_pwd(pass);
     SecByteBlock hash = hash_pwd(salt, pass);
     SecByteBlock enc_key = encrypt(key, hash);
     CryptoPP::SecureWipeBuffer((byte *)pass.data(), pass.size());
 
     SecByteBlock salt_enc_key(salt.size() + enc_key.size());
     std::memcpy(&salt_enc_key[0], &salt[0], salt.size());
-    std::memcpy(&salt_enc_key[salt.size()], &enc_key[0], enc_key.size());
+    std::memcpy(&salt_enc_key[SALT_SIZE], &enc_key[0], enc_key.size());
 
     std::string encoded;
     StringSource ss(salt_enc_key, salt_enc_key.size(), true,
@@ -224,8 +228,6 @@ void add_user(char *dbf, char *name) {
     q.bind(2, hash_encoded);
     q.bind(3, encoded);
     q.exec();
-
-    free(hash_encoded);
 
     // Commit transaction
     transaction.commit();
@@ -289,28 +291,30 @@ void login(char *dbf, char *name) {
 
     SQLite::Statement q{db, "SELECT value, hash FROM user WHERE name = ?"};
     q.bind(1, name);
-    q.executeStep();
+    if (q.executeStep()) {
+        std::string encoded = q.getColumn(0);
+        SecByteBlock sec_decoded = decode(encoded);
+        SecByteBlock salt(SALT_SIZE);
+        std::memcpy(&salt[0], &sec_decoded[0], salt.size());
+        SecByteBlock enc_key(sec_decoded.size() - SALT_SIZE);
+        std::memcpy(&enc_key[0], &sec_decoded[SALT_SIZE], enc_key.size());
 
-    std::string encoded = q.getColumn(0);
-    SecByteBlock sec_decoded = decode(encoded);
-    SecByteBlock salt(SALT_SIZE);
-    std::memcpy(&salt[0], &sec_decoded[0], salt.size());
-    SecByteBlock enc_key(sec_decoded.size() - SALT_SIZE);
-    std::memcpy(&enc_key[0], &sec_decoded[SALT_SIZE], enc_key.size());
+        std::string hash_encoded = q.getColumn(1);
+        std::string pass = get_pass();
+        if (argon2id_verify(hash_encoded.data(), pass.data(), pass.size()) !=
+            ARGON2_OK) {
+            error_exit("[login] Wrong password");
+        }
 
-    std::string hash_encoded = q.getColumn(1);
-    std::string pass = get_pass();
-    if (argon2id_verify(hash_encoded.data(), pass.data(), pass.size()) !=
-        ARGON2_OK) {
-        error_exit("[login] Wrong password");
+        SecByteBlock hash = hash_pwd(salt, pass);
+        CryptoPP::SecureWipeBuffer((byte *)pass.data(), pass.size());
+
+        SecByteBlock key = decrypt(enc_key, hash);
+        std::ofstream o(std::string(name) + ".key", std::ios::binary);
+        o.write((const char *)key.data(), key.size());
+    } else {
+        error_exit("[login] Unknown name");
     }
-
-    SecByteBlock hash = hash_pwd(salt, pass);
-    CryptoPP::SecureWipeBuffer((byte *)pass.data(), pass.size());
-
-    SecByteBlock key = decrypt(enc_key, hash);
-    std::ofstream o(std::string(name) + ".key", std::ios::binary);
-    o.write((const char *)key.data(), key.size());
 
     // Commit transaction
     transaction.commit();
@@ -318,6 +322,7 @@ void login(char *dbf, char *name) {
 
 void add(char *dbf, char *name, char *entry) {
     SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    db.exec("PRAGMA foreign_keys = ON");
 
     // Begin transaction
     SQLite::Transaction transaction(db);
@@ -335,6 +340,66 @@ void add(char *dbf, char *name, char *entry) {
     } else {
         error_exit("[add] Unknown name");
     }
+
+    // Commit transaction
+    transaction.commit();
+}
+
+void show(char *dbf, char *user_name, char *entry_name) {
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    SQLite::Statement q_comb{
+        db,
+        "SELECT eId FROM entry WHERE uId = (SELECT uId FROM user WHERE name = ?) and name = ?"};
+    q_comb.bind(1, user_name);
+    q_comb.bind(2, entry_name);
+    uint32_t eId;
+    if (q_comb.executeStep()) {
+        std::cout << user_name << "  " << entry_name;
+        eId = q_comb.getColumn(0);
+        std::cout << eId << " ";
+    } else {
+        error_exit("[show] Cannot find entry");
+    }
+    while (q_comb.executeStep()) {
+        eId = q_comb.getColumn(0);
+        std::cout << eId << " ";
+    }
+    std::cout << std::endl;
+
+    // Commit transaction
+    transaction.commit();
+}
+
+void add(char *dbf, char *keyf, char *eId, char *inputf) {
+    std::ifstream f(inputf);
+    json j = json::parse(f);
+    std::string data = j.dump(4);
+    if (data.size() < BLOCK_SIZE) {
+        error_exit("[add] Smaller than BLOCK_SIZE");
+    }
+    SecByteBlock sbb(reinterpret_cast<const byte *>(data.data()), data.size());
+    SecByteBlock key = read_key(keyf);
+    SecByteBlock buf = encrypt(sbb, key);
+    data.clear();
+
+    std::string encoded;
+    StringSource ss(buf, buf.size(), true,
+                    new Base64URLEncoder(new StringSink(encoded), false));
+
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    SQLite::Statement q{db, "INSERT INTO data (eId, value) VALUES (?, ?)"};
+    q.bind(1, eId);
+    q.bind(2, encoded);
+    q.exec();
 
     // Commit transaction
     transaction.commit();
@@ -361,6 +426,18 @@ int main(int argc, char *argv[]) {
                    strcmp(argv[6], "-e") == 0) {
             // passpp add -db abc.db -n name -e abc.com
             add(argv[3], argv[5], argv[7]);
+
+        } else if (argc == 8 && strcmp(argv[1], "show") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-n") == 0 &&
+                   strcmp(argv[6], "-e") == 0) {
+            // passpp show -db abc.db -n name -e abc.com
+            show(argv[3], argv[5], argv[7]);
+
+        } else if (argc == 10 && strcmp(argv[1], "add") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
+                   strcmp(argv[6], "-eId") == 0 && strcmp(argv[8], "-i") == 0) {
+            // passpp add -db abc.db -k abc.key -eId eId -i abc.json
+            add(argv[3], argv[5], argv[7], argv[9]);
 
         } else {
             error_exit("[main] Wrong argv");
