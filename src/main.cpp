@@ -1,5 +1,7 @@
 #include <fstream>
 #include <iostream>
+#include <ctime>
+#include <string>
 
 #include <stdlib.h>
 #include <termios.h>
@@ -431,6 +433,13 @@ void show_json(char *dbf, char *keyf, char *eId) {
     }
 }
 
+std::string utc_time() {
+    std::time_t time = std::time({});
+    char timeString[std::size("yyyy-mm-dd hh:mm:ss UTC")];
+    std::strftime(std::data(timeString), std::size(timeString), "%F %T UTC", std::gmtime(&time));
+    return timeString;
+}
+
 void gen_login(char *un, char *file) {
     SecByteBlock pass(PASS_LEN);
     OS_GenerateRandomBlock(false, pass, pass.size());
@@ -441,8 +450,8 @@ void gen_login(char *un, char *file) {
     json j;
     j["username"] = un;
     j["password"] = encoded;
+    j["created"] = utc_time();
     j["note"] = "";
-    j["pad"] = "";
 
     std::string data = j.dump(4);
     if (data.size() < T3F_BLOCK_SIZE + 2) {
@@ -461,6 +470,7 @@ void gen_login(char *un, char *file) {
 void gen_otp(char *file) {
     json j;
     j["otp"] = "";
+    j["created"] = utc_time();
     j["pad"] = "";
 
     std::string data = j.dump(4);
