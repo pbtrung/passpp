@@ -7,7 +7,6 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 
 #include <cryptopp/base64.h>
-#include <cryptopp/files.h>
 #include <cryptopp/hkdf.h>
 #include <cryptopp/kalyna.h>
 #include <cryptopp/misc.h>
@@ -42,7 +41,6 @@ const unsigned int T3F_KEY_SIZE = 128;
 const unsigned int KLN_KEY_SIZE = 64;
 const unsigned int KLN_IV_SIZE = 64;
 const unsigned int T3F_BLOCK_SIZE = 128;
-const unsigned int KLN_BLOCK_SIZE = 64;
 const unsigned int HKDF_SIZE = T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
                                HASH_KEY_SIZE + KLN_KEY_SIZE + KLN_IV_SIZE;
 
@@ -143,8 +141,6 @@ SecByteBlock encrypt(SecByteBlock data, SecByteBlock key) {
         hmac.Update(&buf[HASH_SIZE], SALT_SIZE + data.size());
         hmac.Final(hmac_hash);
         std::memcpy(&buf[0], hmac_hash, HASH_SIZE);
-        CryptoPP::SecureWipeBuffer(key.data(), key.size());
-        CryptoPP::SecureWipeBuffer(hkdf_hash.data(), hkdf_hash.size());
 
         return buf;
     } catch (const Exception &ex) {
@@ -462,6 +458,52 @@ void show_pwd(char *dbf, char *keyf, char *eId) {
     }
 }
 
+void gen_login(char *un, char *file) {
+    SecByteBlock pass(PASS_LEN);
+    OS_GenerateRandomBlock(false, pass, pass.size());
+
+    std::string encoded;
+    StringSource ss(pass, pass.size(), true,
+                    new Base64URLEncoder(new StringSink(encoded), false));
+    json j;
+    j["username"] = un;
+    j["password"] = encoded;
+    j["note"] = "";
+    j["pad"] = "";
+
+    std::string data = j.dump(4);
+    if (data.size() < T3F_BLOCK_SIZE + 2) {
+        SecByteBlock tmp(T3F_BLOCK_SIZE + 2 - data.size());
+        OS_GenerateRandomBlock(false, tmp, tmp.size());
+        std::string pad;
+        StringSource sss(tmp, tmp.size(), true,
+                         new Base64URLEncoder(new StringSink(pad), false));
+        j["pad"] = pad;
+    }
+
+    std::ofstream o(file);
+    o << j.dump(4) << std::endl;
+}
+
+void gen_otp(char *file) {
+    json j;
+    j["otp"] = "";
+    j["pad"] = "";
+
+    std::string data = j.dump(4);
+    if (data.size() < T3F_BLOCK_SIZE) {
+        SecByteBlock tmp(T3F_BLOCK_SIZE - 20 - data.size());
+        OS_GenerateRandomBlock(false, tmp, tmp.size());
+        std::string pad;
+        StringSource sss(tmp, tmp.size(), true,
+                         new Base64URLEncoder(new StringSink(pad), false));
+        j["pad"] = pad;
+    }
+
+    std::ofstream o(file);
+    o << j.dump(4) << std::endl;
+}
+
 int main(int argc, char *argv[]) {
     try {
         if (argc == 3 && strcmp(argv[1], "init") == 0) {
@@ -501,6 +543,16 @@ int main(int argc, char *argv[]) {
                    strcmp(argv[6], "-eId") == 0) {
             // passpp show-pwd -db abc.db -k abc.key -eId eId
             show_pwd(argv[3], argv[5], argv[7]);
+
+        } else if (argc == 6 && strcmp(argv[1], "gen-login") == 0 &&
+                   strcmp(argv[2], "-u") == 0 && strcmp(argv[4], "-o") == 0) {
+            // passpp gen-login -u abc@def.com -o def.json
+            gen_login(argv[3], argv[5]);
+
+        } else if (argc == 4 && strcmp(argv[1], "gen-otp") == 0 &&
+                   strcmp(argv[2], "-o") == 0) {
+            // passpp gen-otp -o def.json
+            gen_otp(argv[3]);
 
         } else {
             error_exit("[main] Wrong argv");
