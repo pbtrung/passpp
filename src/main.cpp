@@ -37,11 +37,14 @@ const unsigned int TWEAK_SIZE = 16;
 const unsigned int HASH_KEY_SIZE = 64;
 const unsigned int HASH_SIZE = 64;
 const unsigned int SALT_SIZE = 64;
-const unsigned int IV_SIZE = 128;
-const unsigned int ENC_KEY_SIZE = 128;
-const unsigned int BLOCK_SIZE = 128;
-const unsigned int HKDF_SIZE =
-    ENC_KEY_SIZE + IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE;
+const unsigned int T3F_IV_SIZE = 128;
+const unsigned int T3F_KEY_SIZE = 128;
+const unsigned int KLN_KEY_SIZE = 64;
+const unsigned int KLN_IV_SIZE = 64;
+const unsigned int T3F_BLOCK_SIZE = 128;
+const unsigned int KLN_BLOCK_SIZE = 64;
+const unsigned int HKDF_SIZE = T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
+                               HASH_KEY_SIZE + KLN_KEY_SIZE + KLN_IV_SIZE;
 
 static void error_exit(std::string msg) {
     std::cerr << msg << std::endl;
@@ -108,21 +111,34 @@ SecByteBlock encrypt(SecByteBlock data, SecByteBlock key) {
         hkdf.DeriveKey(hkdf_hash, hkdf_hash.size(), key, key.size(),
                        &buf[HASH_SIZE], SALT_SIZE, NULL, 0);
 
-        ConstByteArrayParameter twk(&hkdf_hash[ENC_KEY_SIZE + IV_SIZE],
+        Kalyna512::Encryption kln(
+            &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE],
+            KLN_KEY_SIZE);
+        CBC_CTS_Mode_ExternalCipher::Encryption kln_enc(
+            kln, &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
+                            HASH_KEY_SIZE + KLN_KEY_SIZE]);
+
+        StreamTransformationFilter kln_stf(
+            kln_enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
+        kln_stf.Put(data, data.size());
+        kln_stf.MessageEnd();
+
+        ConstByteArrayParameter twk(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE],
                                     TWEAK_SIZE, false);
         AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
-        Threefish1024::Encryption t3f(&hkdf_hash[0], ENC_KEY_SIZE);
+        Threefish1024::Encryption t3f(&hkdf_hash[0], T3F_KEY_SIZE);
         t3f.SetTweak(params);
         CBC_CTS_Mode_ExternalCipher::Encryption enc(t3f,
-                                                    &hkdf_hash[ENC_KEY_SIZE]);
+                                                    &hkdf_hash[T3F_KEY_SIZE]);
+
         StreamTransformationFilter stf(
             enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
-        stf.Put(data, data.size());
+        stf.Put(&buf[HASH_SIZE + SALT_SIZE], data.size());
         stf.MessageEnd();
 
         SecByteBlock hmac_hash(HASH_SIZE);
         HMAC<SHA3_512> hmac;
-        hmac.SetKey(&hkdf_hash[ENC_KEY_SIZE + IV_SIZE + TWEAK_SIZE],
+        hmac.SetKey(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE],
                     HASH_KEY_SIZE);
         hmac.Update(&buf[HASH_SIZE], SALT_SIZE + data.size());
         hmac.Final(hmac_hash);
@@ -255,7 +271,7 @@ SecByteBlock decrypt(SecByteBlock data, SecByteBlock key) {
 
         SecByteBlock hmac_hash(HASH_SIZE);
         HMAC<SHA3_512> hmac;
-        hmac.SetKey(&hkdf_hash[ENC_KEY_SIZE + IV_SIZE + TWEAK_SIZE],
+        hmac.SetKey(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE],
                     HASH_KEY_SIZE);
         hmac.Update(&data[HASH_SIZE], data.size() - HASH_SIZE);
         hmac.Final(hmac_hash);
@@ -265,16 +281,28 @@ SecByteBlock decrypt(SecByteBlock data, SecByteBlock key) {
             error_exit("[decrypt] Wrong HMAC");
         }
 
-        ConstByteArrayParameter twk(&hkdf_hash[ENC_KEY_SIZE + IV_SIZE],
+        ConstByteArrayParameter twk(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE],
                                     TWEAK_SIZE, false);
         AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
-        Threefish1024::Decryption t3f(&hkdf_hash[0], ENC_KEY_SIZE);
+        Threefish1024::Decryption t3f(&hkdf_hash[0], T3F_KEY_SIZE);
         t3f.SetTweak(params);
         CBC_CTS_Mode_ExternalCipher::Decryption dec(t3f,
-                                                    &hkdf_hash[ENC_KEY_SIZE]);
+                                                    &hkdf_hash[T3F_KEY_SIZE]);
         StreamTransformationFilter stf(dec, new ArraySink(buf, buf.size()));
         stf.Put(&data[HASH_SIZE + SALT_SIZE], buf.size());
         stf.MessageEnd();
+
+        Kalyna512::Decryption kln(
+            &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE],
+            KLN_KEY_SIZE);
+        CBC_CTS_Mode_ExternalCipher::Decryption kln_dec(
+            kln, &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
+                            HASH_KEY_SIZE + KLN_KEY_SIZE]);
+
+        StreamTransformationFilter kln_stf(kln_dec,
+                                           new ArraySink(buf, buf.size()));
+        kln_stf.Put(buf, buf.size());
+        kln_stf.MessageEnd();
 
         return buf;
     } catch (const Exception &ex) {
@@ -378,8 +406,8 @@ void add(char *dbf, char *keyf, char *eId, char *inputf) {
     std::ifstream f(inputf);
     json j = json::parse(f);
     std::string data = j.dump(4);
-    if (data.size() < BLOCK_SIZE) {
-        error_exit("[add] Smaller than BLOCK_SIZE");
+    if (data.size() < T3F_BLOCK_SIZE) {
+        error_exit("[add] Smaller than T3F_BLOCK_SIZE");
     }
     SecByteBlock sbb(reinterpret_cast<const byte *>(data.data()), data.size());
     SecByteBlock key = read_key(keyf);
