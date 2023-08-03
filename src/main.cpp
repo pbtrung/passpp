@@ -295,29 +295,76 @@ void generate(char *un, char *file) {
     }
 }
 
+void add_gen(char *dbf, char *un, char *file, char *value) {
+    add(dbf, value);
+    generate(un, file);
+}
+
+void search(char *dbf, char *term) {
+    try {
+        SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+        db.exec("PRAGMA foreign_keys = ON");
+
+        // Begin transaction
+        SQLite::Transaction transaction(db);
+        SQLite::Statement q{
+            db, "select * from data where dId in (select rowid from search "
+                "where value match ?)"};
+        q.bind(1, term);
+        while (q.executeStep()) {
+            uint32_t dId = (uint32_t)q.getColumn(0);
+            std::string value = q.getColumn(1);
+            SQLite::Statement q_his{db,
+                                    "select hId from history where dId = ?"};
+            q_his.bind(1, dId);
+            std::vector<uint32_t> hId;
+            while (q_his.executeStep()) {
+                hId.push_back((uint32_t)q_his.getColumn(0));
+            }
+
+            std::cout << std::setw(5) << std::left << dId;
+            std::cout << std::setw(25) << std::left << value;
+            for (auto i : hId) {
+                std::cout << i << " ";
+            }
+            std::cout << std::endl;
+        }
+
+        // Commit transaction
+        transaction.commit();
+    } catch (const Exception &ex) {
+        std::cerr << ex.what() << std::endl;
+        exit(-1);
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc == 3 && strcmp(argv[1], "init") == 0) {
         // passpp init abc.db
         init(argv[2]);
-
-        // cotp_error_t err;
-        // const char *K = "JBSWY3DPEHPK3PXP";
-        // char *totp = get_totp (K, 6, 30, SHA1, &err);
-        // std::cout << totp << std::endl;
     } else if (argc == 5 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0) {
-        // passpp add -db abc.db abc.com
+        // passpp add -db abc.db test/abc.com
         add(argv[3], argv[4]);
     } else if (argc == 9 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
                strcmp(argv[6], "-dId") == 0) {
         // passpp add -db abc.db -k abc.key -dId 1 abc.json
         add(argv[3], argv[5], argv[7], argv[8]);
+    } else if (argc == 9 && strcmp(argv[1], "add") == 0 &&
+               strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-u") == 0 &&
+               strcmp(argv[6], "-f") == 0) {
+        // passpp add -db abc.db -u abc@def.com -f abc.json test/abc.com
+        add_gen(argv[3], argv[5], argv[7], argv[8]);
     } else if (argc == 8 && strcmp(argv[1], "show") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
                strcmp(argv[6], "-dId") == 0) {
         // passpp show -db abc.db -k abc.key -dId 1
         show(argv[3], argv[5], argv[7]);
+    } else if (argc == 5 && strcmp(argv[1], "search") == 0 &&
+               strcmp(argv[2], "-db") == 0) {
+        // passpp search -db abc.db abc
+        search(argv[3], argv[4]);
     } else if (argc == 5 && strcmp(argv[1], "gen") == 0 &&
                strcmp(argv[2], "-u") == 0) {
         // passpp gen -u abc@def.com def.json
@@ -325,4 +372,11 @@ int main(int argc, char *argv[]) {
     } else {
         error_exit("[main] Wrong argv");
     }
+
+    return 0;
+
+    // cotp_error_t err;
+    // const char *K = "JBSWY3DPEHPK3PXP";
+    // char *totp = get_totp (K, 6, 30, SHA1, &err);
+    // std::cout << totp << std::endl;
 }
