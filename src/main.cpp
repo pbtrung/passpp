@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 
+#include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -558,7 +559,8 @@ void search(char *dbf, char *term) {
     transaction.commit();
 }
 
-void show_otp(char *dbf, char *keyf, char *eId) {
+void show_otp(char *dbf, char *keyf, char *eId, char *len, char *time,
+              char *algo) {
     SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
     db.exec("PRAGMA foreign_keys = ON");
 
@@ -568,6 +570,7 @@ void show_otp(char *dbf, char *keyf, char *eId) {
     SQLite::Statement q{
         db, "SELECT value FROM data WHERE eId = ? ORDER BY dId DESC LIMIT 1"};
     q.bind(1, eId);
+    char *totp = NULL;
     if (q.executeStep()) {
         std::string encoded = q.getColumn(0);
         SecByteBlock sec_decoded = decode(encoded);
@@ -578,11 +581,32 @@ void show_otp(char *dbf, char *keyf, char *eId) {
             std::string(reinterpret_cast<const char *>(buf.data()), buf.size());
         json js = json::parse(j);
         cotp_error_t err;
-        char *totp =
-            get_totp(js["otp"].get<std::string>().data(), 6, 30, SHA1, &err);
+        long len_num = strtol(len, NULL, 10);
+        long time_num = strtol(time, NULL, 10);
+        switch (algo[0]) {
+        case '1':
+            totp = get_totp(js["otp"].get<std::string>().data(), len_num,
+                            time_num, SHA1, &err);
+            break;
+        case '2':
+            totp = get_totp(js["otp"].get<std::string>().data(), len_num,
+                            time_num, SHA256, &err);
+            break;
+        case '3':
+            totp = get_totp(js["otp"].get<std::string>().data(), len_num,
+                            time_num, SHA512, &err);
+            break;
+        }
+
+        SQLite::Statement q_entry{db, "SELECT name FROM entry WHERE eId = ?"};
+        q_entry.bind(1, eId);
+        if (q_entry.executeStep()) {
+            std::string entry_name = q_entry.getColumn(0);
+            std::cout << entry_name << "  ";
+        }
         std::cout << totp << std::endl;
     } else {
-        error_exit("[show_pwd] Cannot find entry");
+        error_exit("[show_otp] Cannot find entry");
     }
 }
 
@@ -646,11 +670,11 @@ int main(int argc, char *argv[]) {
             // passpp search -db abc.db -t abc
             search(argv[3], argv[5]);
 
-        } else if (argc == 8 && strcmp(argv[1], "show-otp") == 0 &&
+        } else if (argc == 12 && strcmp(argv[1], "show-otp") == 0 &&
                    strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
-                   strcmp(argv[6], "-eId") == 0) {
-            // passpp show-otp -db abc.db -k abc.key -eId eId
-            show_otp(argv[3], argv[5], argv[7]);
+                   strcmp(argv[6], "-eId") == 0 && strcmp(argv[8], "-p") == 0) {
+            // passpp show-otp -db abc.db -k abc.key -eId eId -p len time algo
+            show_otp(argv[3], argv[5], argv[7], argv[9], argv[10], argv[11]);
 
         } else {
             error_exit("[main] Wrong argv");
