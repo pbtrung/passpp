@@ -59,95 +59,79 @@ size_t get_file_size(std::ifstream *stream) {
 }
 
 SecByteBlock read_key(char *keyf) {
-    try {
-        std::ifstream infile(keyf, std::ios::in | std::ios::binary);
-        if (get_file_size(&infile) != KEY_SIZE) {
-            error_exit("[read_key] Wrong key file");
-        }
-        SecByteBlock key(KEY_SIZE);
-        infile.read((char *)key.data(), key.size());
-        infile.close();
-        return key;
-    } catch (const Exception &ex) {
-        std::cerr << ex.what() << std::endl;
-        exit(-1);
+    std::ifstream infile(keyf, std::ios::in | std::ios::binary);
+    if (get_file_size(&infile) != KEY_SIZE) {
+        error_exit("[read_key] Wrong key file");
     }
+    SecByteBlock key(KEY_SIZE);
+    infile.read((char *)key.data(), key.size());
+    infile.close();
+    return key;
 }
 
 void init(char *dbf) {
-    try {
-        SQLite::Database db(dbf, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
 
-        // Begin transaction
-        SQLite::Transaction transaction(db);
+    // Begin transaction
+    SQLite::Transaction transaction(db);
 
-        db.exec(
-            "CREATE TABLE user (uId INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, hash BLOB NOT NULL, value BLOB NOT NULL)");
-        db.exec("CREATE UNIQUE INDEX idx_user ON user(name)");
-        db.exec(
-            "CREATE TABLE entry (eId INTEGER PRIMARY KEY, uId INTEGER NOT NULL, name TEXT NOT NULL, FOREIGN KEY(uId) REFERENCES user(uId))");
-        db.exec("CREATE INDEX idx_entry ON entry(name)");
-        db.exec(
-            "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES entry(eId))");
-        db.exec(
-            "CREATE VIRTUAL TABLE search USING FTS5 (name, tokenize='porter unicode61', content='entry', content_rowid='eId')");
+    db.exec(
+        "CREATE TABLE user (uId INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, hash BLOB NOT NULL, value BLOB NOT NULL)");
+    db.exec("CREATE UNIQUE INDEX idx_user ON user(name)");
+    db.exec(
+        "CREATE TABLE entry (eId INTEGER PRIMARY KEY, uId INTEGER NOT NULL, name TEXT NOT NULL, FOREIGN KEY(uId) REFERENCES user(uId))");
+    db.exec("CREATE INDEX idx_entry ON entry(name)");
+    db.exec(
+        "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES entry(eId))");
+    db.exec(
+        "CREATE VIRTUAL TABLE search USING FTS5 (name, tokenize='porter unicode61', content='entry', content_rowid='eId')");
 
-        // Commit transaction
-        transaction.commit();
-    } catch (const Exception &ex) {
-        std::cerr << ex.what() << std::endl;
-        exit(-1);
-    }
+    // Commit transaction
+    transaction.commit();
 }
 
 SecByteBlock encrypt(SecByteBlock data, SecByteBlock key) {
-    try {
-        SecByteBlock buf(HASH_SIZE + SALT_SIZE + data.size());
-        OS_GenerateRandomBlock(false, &buf[HASH_SIZE], SALT_SIZE);
+    SecByteBlock buf(HASH_SIZE + SALT_SIZE + data.size());
+    OS_GenerateRandomBlock(false, &buf[HASH_SIZE], SALT_SIZE);
 
-        SecByteBlock hkdf_hash(HKDF_SIZE);
-        HKDF<SHA3_512> hkdf;
-        hkdf.DeriveKey(hkdf_hash, hkdf_hash.size(), key, key.size(),
-                       &buf[HASH_SIZE], SALT_SIZE, NULL, 0);
+    SecByteBlock hkdf_hash(HKDF_SIZE);
+    HKDF<SHA3_512> hkdf;
+    hkdf.DeriveKey(hkdf_hash, hkdf_hash.size(), key, key.size(),
+                   &buf[HASH_SIZE], SALT_SIZE, NULL, 0);
 
-        Kalyna512::Encryption kln(
-            &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE],
-            KLN_KEY_SIZE);
-        CBC_CTS_Mode_ExternalCipher::Encryption kln_enc(
-            kln, &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
-                            HASH_KEY_SIZE + KLN_KEY_SIZE]);
+    Kalyna512::Encryption kln(
+        &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE],
+        KLN_KEY_SIZE);
+    CBC_CTS_Mode_ExternalCipher::Encryption kln_enc(
+        kln, &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
+                        HASH_KEY_SIZE + KLN_KEY_SIZE]);
 
-        StreamTransformationFilter kln_stf(
-            kln_enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
-        kln_stf.Put(data, data.size());
-        kln_stf.MessageEnd();
+    StreamTransformationFilter kln_stf(
+        kln_enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
+    kln_stf.Put(data, data.size());
+    kln_stf.MessageEnd();
 
-        ConstByteArrayParameter twk(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE],
-                                    TWEAK_SIZE, false);
-        AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
-        Threefish1024::Encryption t3f(&hkdf_hash[0], T3F_KEY_SIZE);
-        t3f.SetTweak(params);
-        CBC_CTS_Mode_ExternalCipher::Encryption enc(t3f,
-                                                    &hkdf_hash[T3F_KEY_SIZE]);
+    ConstByteArrayParameter twk(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE],
+                                TWEAK_SIZE, false);
+    AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
+    Threefish1024::Encryption t3f(&hkdf_hash[0], T3F_KEY_SIZE);
+    t3f.SetTweak(params);
+    CBC_CTS_Mode_ExternalCipher::Encryption enc(t3f, &hkdf_hash[T3F_KEY_SIZE]);
 
-        StreamTransformationFilter stf(
-            enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
-        stf.Put(&buf[HASH_SIZE + SALT_SIZE], data.size());
-        stf.MessageEnd();
+    StreamTransformationFilter stf(
+        enc, new ArraySink(&buf[HASH_SIZE + SALT_SIZE], data.size()));
+    stf.Put(&buf[HASH_SIZE + SALT_SIZE], data.size());
+    stf.MessageEnd();
 
-        SecByteBlock hmac_hash(HASH_SIZE);
-        HMAC<SHA3_512> hmac;
-        hmac.SetKey(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE],
-                    HASH_KEY_SIZE);
-        hmac.Update(&buf[HASH_SIZE], SALT_SIZE + data.size());
-        hmac.Final(hmac_hash);
-        std::memcpy(&buf[0], hmac_hash, HASH_SIZE);
+    SecByteBlock hmac_hash(HASH_SIZE);
+    HMAC<SHA3_512> hmac;
+    hmac.SetKey(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE],
+                HASH_KEY_SIZE);
+    hmac.Update(&buf[HASH_SIZE], SALT_SIZE + data.size());
+    hmac.Final(hmac_hash);
+    std::memcpy(&buf[0], hmac_hash, HASH_SIZE);
 
-        return buf;
-    } catch (const Exception &ex) {
-        std::cerr << ex.what() << std::endl;
-        exit(-1);
-    }
+    return buf;
 }
 
 std::string ask_pass(std::string prompt) {
@@ -258,54 +242,47 @@ SecByteBlock decode(std::string encoded) {
 }
 
 SecByteBlock decrypt(SecByteBlock data, SecByteBlock key) {
-    try {
-        SecByteBlock buf(data.size() - HASH_SIZE - SALT_SIZE);
+    SecByteBlock buf(data.size() - HASH_SIZE - SALT_SIZE);
 
-        SecByteBlock hkdf_hash(HKDF_SIZE);
-        HKDF<SHA3_512> hkdf;
-        hkdf.DeriveKey(hkdf_hash, hkdf_hash.size(), key, key.size(),
-                       &data[HASH_SIZE], SALT_SIZE, NULL, 0);
+    SecByteBlock hkdf_hash(HKDF_SIZE);
+    HKDF<SHA3_512> hkdf;
+    hkdf.DeriveKey(hkdf_hash, hkdf_hash.size(), key, key.size(),
+                   &data[HASH_SIZE], SALT_SIZE, NULL, 0);
 
-        SecByteBlock hmac_hash(HASH_SIZE);
-        HMAC<SHA3_512> hmac;
-        hmac.SetKey(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE],
-                    HASH_KEY_SIZE);
-        hmac.Update(&data[HASH_SIZE], data.size() - HASH_SIZE);
-        hmac.Final(hmac_hash);
-        SecByteBlock hash(HASH_SIZE);
-        std::memcpy(hash, &data[0], HASH_SIZE);
-        if (hash != hmac_hash) {
-            error_exit("[decrypt] Wrong HMAC");
-        }
-
-        ConstByteArrayParameter twk(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE],
-                                    TWEAK_SIZE, false);
-        AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
-        Threefish1024::Decryption t3f(&hkdf_hash[0], T3F_KEY_SIZE);
-        t3f.SetTweak(params);
-        CBC_CTS_Mode_ExternalCipher::Decryption dec(t3f,
-                                                    &hkdf_hash[T3F_KEY_SIZE]);
-        StreamTransformationFilter stf(dec, new ArraySink(buf, buf.size()));
-        stf.Put(&data[HASH_SIZE + SALT_SIZE], buf.size());
-        stf.MessageEnd();
-
-        Kalyna512::Decryption kln(
-            &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE],
-            KLN_KEY_SIZE);
-        CBC_CTS_Mode_ExternalCipher::Decryption kln_dec(
-            kln, &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
-                            HASH_KEY_SIZE + KLN_KEY_SIZE]);
-
-        StreamTransformationFilter kln_stf(kln_dec,
-                                           new ArraySink(buf, buf.size()));
-        kln_stf.Put(buf, buf.size());
-        kln_stf.MessageEnd();
-
-        return buf;
-    } catch (const Exception &ex) {
-        std::cerr << ex.what() << std::endl;
-        exit(-1);
+    SecByteBlock hmac_hash(HASH_SIZE);
+    HMAC<SHA3_512> hmac;
+    hmac.SetKey(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE],
+                HASH_KEY_SIZE);
+    hmac.Update(&data[HASH_SIZE], data.size() - HASH_SIZE);
+    hmac.Final(hmac_hash);
+    SecByteBlock hash(HASH_SIZE);
+    std::memcpy(hash, &data[0], HASH_SIZE);
+    if (hash != hmac_hash) {
+        error_exit("[decrypt] Wrong HMAC");
     }
+
+    ConstByteArrayParameter twk(&hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE],
+                                TWEAK_SIZE, false);
+    AlgorithmParameters params = MakeParameters(Name::Tweak(), twk);
+    Threefish1024::Decryption t3f(&hkdf_hash[0], T3F_KEY_SIZE);
+    t3f.SetTweak(params);
+    CBC_CTS_Mode_ExternalCipher::Decryption dec(t3f, &hkdf_hash[T3F_KEY_SIZE]);
+    StreamTransformationFilter stf(dec, new ArraySink(buf, buf.size()));
+    stf.Put(&data[HASH_SIZE + SALT_SIZE], buf.size());
+    stf.MessageEnd();
+
+    Kalyna512::Decryption kln(
+        &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE + HASH_KEY_SIZE],
+        KLN_KEY_SIZE);
+    CBC_CTS_Mode_ExternalCipher::Decryption kln_dec(
+        kln, &hkdf_hash[T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
+                        HASH_KEY_SIZE + KLN_KEY_SIZE]);
+
+    StreamTransformationFilter kln_stf(kln_dec, new ArraySink(buf, buf.size()));
+    kln_stf.Put(buf, buf.size());
+    kln_stf.MessageEnd();
+
+    return buf;
 }
 
 void login(char *dbf, char *name) {
