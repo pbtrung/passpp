@@ -67,9 +67,9 @@ void init(char *dbf) {
         SQLite::Transaction transaction(db);
 
         db.exec(
-            "CREATE TABLE login (lId INTEGER PRIMARY KEY, value BLOB NOT NULL)");
+            "CREATE TABLE user (uId INTEGER PRIMARY KEY, value BLOB NOT NULL)");
         db.exec(
-            "CREATE TABLE entry (eId INTEGER PRIMARY KEY, lId INTEGER NOT NULL, value TEXT NOT NULL, FOREIGN KEY(lId) REFERENCES login(lId))");
+            "CREATE TABLE entry (eId INTEGER PRIMARY KEY, uId INTEGER NOT NULL, value TEXT NOT NULL, FOREIGN KEY(uId) REFERENCES user(uId))");
         db.exec(
             "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES data(eId))");
         db.exec(
