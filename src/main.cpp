@@ -84,11 +84,11 @@ void init(char *dbf) {
         db.exec("CREATE UNIQUE INDEX idx_user ON user(name)");
         db.exec(
             "CREATE TABLE entry (eId INTEGER PRIMARY KEY, uId INTEGER NOT NULL, name TEXT NOT NULL, FOREIGN KEY(uId) REFERENCES user(uId))");
-        db.exec("CREATE UNIQUE INDEX idx_entry ON entry(value)");
+        db.exec("CREATE INDEX idx_entry ON entry(name)");
         db.exec(
-            "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES data(eId))");
+            "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES entry(eId))");
         db.exec(
-            "CREATE VIRTUAL TABLE search USING FTS5 (value, tokenize='porter unicode61', content='entry', content_rowid='eId')");
+            "CREATE VIRTUAL TABLE search USING FTS5 (name, tokenize='porter unicode61', content='entry', content_rowid='eId')");
 
         // Commit transaction
         transaction.commit();
@@ -332,8 +332,8 @@ void add(char *dbf, char *name, char *entry) {
     if (q_user.executeStep()) {
         uint32_t uId = q_user.getColumn(0);
 
-        SQLite::Statement q_data{
-            db, "INSERT INTO entry (uId, value) VALUES (?, ?)"};
+        SQLite::Statement q_data{db,
+                                 "INSERT INTO entry (uId, name) VALUES (?, ?)"};
         q_data.bind(1, uId);
         q_data.bind(2, entry);
         q_data.exec();
@@ -358,7 +358,7 @@ void show(char *dbf, char *user_name, char *entry_name) {
     q_comb.bind(2, entry_name);
     uint32_t eId;
     if (q_comb.executeStep()) {
-        std::cout << user_name << "  " << entry_name;
+        std::cout << user_name << "  " << entry_name << "  ";
         eId = q_comb.getColumn(0);
         std::cout << eId << " ";
     } else {
@@ -438,6 +438,12 @@ int main(int argc, char *argv[]) {
                    strcmp(argv[6], "-eId") == 0 && strcmp(argv[8], "-i") == 0) {
             // passpp add -db abc.db -k abc.key -eId eId -i abc.json
             add(argv[3], argv[5], argv[7], argv[9]);
+
+        } else if (argc == 10 && strcmp(argv[1], "add") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
+                   strcmp(argv[6], "-eId") == 0 && strcmp(argv[8], "-i") == 0) {
+            // passpp add -db abc.db -k abc.key -eId eId -i abc.json
+            show(argv[3], argv[5], argv[7], argv[9]);
 
         } else {
             error_exit("[main] Wrong argv");
