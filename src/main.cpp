@@ -6,6 +6,7 @@
 #include <cryptopp/base64.h>
 #include <cryptopp/hkdf.h>
 #include <cryptopp/kalyna.h>
+#include <cryptopp/misc.h>
 #include <cryptopp/modes.h>
 #include <cryptopp/osrng.h>
 #include <cryptopp/sha3.h>
@@ -68,11 +69,11 @@ void init(char *dbf) {
         db.exec(
             "CREATE TABLE login (lId INTEGER PRIMARY KEY, value BLOB NOT NULL)");
         db.exec(
-            "CREATE TABLE data (dId INTEGER PRIMARY KEY, lId INTEGER NOT NULL, value TEXT NOT NULL, FOREIGN KEY(lId) REFERENCES login(lId))");
+            "CREATE TABLE entry (eId INTEGER PRIMARY KEY, lId INTEGER NOT NULL, value TEXT NOT NULL, FOREIGN KEY(lId) REFERENCES login(lId))");
         db.exec(
-            "CREATE TABLE history (hId INTEGER PRIMARY KEY, dId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(dId) REFERENCES data(dId))");
+            "CREATE TABLE data (dId INTEGER PRIMARY KEY, eId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(eId) REFERENCES data(eId))");
         db.exec(
-            "CREATE VIRTUAL TABLE search USING FTS5 (value, tokenize='porter unicode61', content='data', content_rowid='dId')");
+            "CREATE VIRTUAL TABLE search USING FTS5 (value, tokenize='porter unicode61', content='entry', content_rowid='eId')");
 
         // Commit transaction
         transaction.commit();
@@ -89,14 +90,14 @@ void add(char *dbf, char *value) {
         // Begin transaction
         SQLite::Transaction transaction(db);
 
-        SQLite::Statement q_data{db, "INSERT INTO data (value) VALUES (?)"};
+        SQLite::Statement q_data{db, "INSERT INTO entry (value) VALUES (?)"};
         q_data.bind(1, value);
         q_data.exec();
 
         SQLite::Statement q_last{db, "SELECT last_insert_rowid()"};
         while (q_last.executeStep()) {
-            uint32_t dId = (uint32_t)q_last.getColumn(0);
-            std::cout << "dId: " << dId << std::endl;
+            uint32_t eId = (uint32_t)q_last.getColumn(0);
+            std::cout << "eId: " << eId << std::endl;
         }
 
         SQLite::Statement q_search{db, "INSERT INTO search (value) VALUES (?)"};
@@ -141,8 +142,8 @@ SecByteBlock encrypt(SecByteBlock data, char *keyf) {
         hmac.Update(&buf[HASH_SIZE], SALT_SIZE + data.size());
         hmac.Final(hmac_hash);
         std::memcpy(&buf[0], hmac_hash, HASH_SIZE);
-        CryptoPP::SecureWipeBuffer(key, key.size());
-        CryptoPP::SecureWipeBuffer(hkdf_hash, hkdf_hash.size());
+        CryptoPP::SecureWipeBuffer(key.data(), key.size());
+        CryptoPP::SecureWipeBuffer(hkdf_hash.data(), hkdf_hash.size());
 
         return buf;
     } catch (const Exception &ex) {
@@ -183,8 +184,8 @@ SecByteBlock decrypt(SecByteBlock data, char *keyf) {
         if (hash != hmac_hash) {
             error_exit("[main] Wrong HMAC");
         }
-        CryptoPP::SecureWipeBuffer(key, key.size());
-        CryptoPP::SecureWipeBuffer(hkdf_hash, hkdf_hash.size());
+        CryptoPP::SecureWipeBuffer(key.data(), key.size());
+        CryptoPP::SecureWipeBuffer(hkdf_hash.data(), hkdf_hash.size());
 
         return buf;
     } catch (const Exception &ex) {
@@ -193,7 +194,7 @@ SecByteBlock decrypt(SecByteBlock data, char *keyf) {
     }
 }
 
-void add(char *dbf, char *keyf, char *dId, char *file) {
+void add(char *dbf, char *keyf, char *eId, char *file) {
     std::ifstream f(file);
     json j = json::parse(f);
     std::string data = j.dump(4);
@@ -215,10 +216,9 @@ void add(char *dbf, char *keyf, char *dId, char *file) {
         // Begin transaction
         SQLite::Transaction transaction(db);
 
-        SQLite::Statement q{db,
-                            "INSERT INTO history (value, dId) VALUES (?, ?)"};
-        q.bind(1, encoded);
-        q.bind(2, dId);
+        SQLite::Statement q{db, "INSERT INTO data (eId, value) VALUES (?, ?)"};
+        q.bind(1, eId);
+        q.bind(2, encoded);
         q.exec();
 
         // Commit transaction
@@ -229,7 +229,7 @@ void add(char *dbf, char *keyf, char *dId, char *file) {
     }
 }
 
-void show(char *dbf, char *keyf, char *dId) {
+void show(char *dbf, char *keyf, char *eId) {
     try {
         SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
         db.exec("PRAGMA foreign_keys = ON");
@@ -239,8 +239,8 @@ void show(char *dbf, char *keyf, char *dId) {
 
         SQLite::Statement q{
             db,
-            "SELECT value FROM history WHERE dId = ? ORDER BY hId DESC LIMIT 1"};
-        q.bind(1, dId);
+            "SELECT value FROM data WHERE eId = ? ORDER BY dId DESC LIMIT 1"};
+        q.bind(1, eId);
         while (q.executeStep()) {
             std::string encoded = q.getColumn(0);
             std::string decoded;
@@ -315,13 +315,12 @@ void search(char *dbf, char *term) {
         SQLite::Transaction transaction(db);
         SQLite::Statement q{
             db,
-            "select * from data where dId in (select rowid from search where value match ?)"};
+            "select * from entry where eId in (select rowid from search where value match ?)"};
         q.bind(1, term);
         while (q.executeStep()) {
             uint32_t dId = (uint32_t)q.getColumn(0);
             std::string value = q.getColumn(1);
-            SQLite::Statement q_his{db,
-                                    "select hId from history where dId = ?"};
+            SQLite::Statement q_his{db, "select dId from data where eId = ?"};
             q_his.bind(1, dId);
             std::vector<uint32_t> hId;
             while (q_his.executeStep()) {
@@ -354,8 +353,8 @@ int main(int argc, char *argv[]) {
         add(argv[3], argv[4]);
     } else if (argc == 9 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
-               strcmp(argv[6], "-dId") == 0) {
-        // passpp add -db abc.db -k abc.key -dId 1 abc.json
+               strcmp(argv[6], "-eId") == 0) {
+        // passpp add -db abc.db -k abc.key -eId 1 abc.json
         add(argv[3], argv[5], argv[7], argv[8]);
     } else if (argc == 9 && strcmp(argv[1], "add") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-u") == 0 &&
@@ -364,8 +363,8 @@ int main(int argc, char *argv[]) {
         add_gen(argv[3], argv[5], argv[7], argv[8]);
     } else if (argc == 8 && strcmp(argv[1], "show") == 0 &&
                strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
-               strcmp(argv[6], "-dId") == 0) {
-        // passpp show -db abc.db -k abc.key -dId 1
+               strcmp(argv[6], "-eId") == 0) {
+        // passpp show -db abc.db -k abc.key -eId 1
         show(argv[3], argv[5], argv[7]);
     } else if (argc == 5 && strcmp(argv[1], "search") == 0 &&
                strcmp(argv[2], "-db") == 0) {
