@@ -405,6 +405,35 @@ void add(char *dbf, char *keyf, char *eId, char *inputf) {
     transaction.commit();
 }
 
+void show_pwd(char *dbf, char *keyf, char *eId) {
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    SQLite::Statement q{
+        db, "SELECT value FROM data WHERE eId = ? ORDER BY dId DESC LIMIT 1"};
+    q.bind(1, eId);
+    if (q.executeStep()) {
+        std::string encoded = q.getColumn(0);
+        SecByteBlock sec_decoded = decode(encoded);
+        SecByteBlock key = read_key(keyf);
+        SecByteBlock buf = decrypt(sec_decoded, key);
+
+        std::string j =
+            std::string(reinterpret_cast<const char *>(buf.data()), buf.size());
+        json js = json::parse(j);
+        std::cout << "username: " + js["username"].get<std::string>()
+                  << std::endl;
+        std::cout << "password: " + js["password"].get<std::string>()
+                  << std::endl;
+        std::cout << "note: " + js["note"].get<std::string>() << std::endl;
+    } else {
+        error_exit("[show_pwd] Cannot find entry");
+    }
+}
+
 int main(int argc, char *argv[]) {
     try {
         if (argc == 3 && strcmp(argv[1], "init") == 0) {
@@ -439,11 +468,11 @@ int main(int argc, char *argv[]) {
             // passpp add -db abc.db -k abc.key -eId eId -i abc.json
             add(argv[3], argv[5], argv[7], argv[9]);
 
-        } else if (argc == 10 && strcmp(argv[1], "add") == 0 &&
+        } else if (argc == 8 && strcmp(argv[1], "show-pwd") == 0 &&
                    strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
-                   strcmp(argv[6], "-eId") == 0 && strcmp(argv[8], "-i") == 0) {
-            // passpp add -db abc.db -k abc.key -eId eId -i abc.json
-            show(argv[3], argv[5], argv[7], argv[9]);
+                   strcmp(argv[6], "-eId") == 0) {
+            // passpp show-pwd -db abc.db -k abc.key -eId eId
+            show_pwd(argv[3], argv[5], argv[7]);
 
         } else {
             error_exit("[main] Wrong argv");
