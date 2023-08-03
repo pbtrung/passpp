@@ -5,6 +5,7 @@
 
 #include <cryptopp/base64.h>
 #include <cryptopp/hkdf.h>
+#include <cryptopp/kalyna.h>
 #include <cryptopp/modes.h>
 #include <cryptopp/osrng.h>
 #include <cryptopp/sha3.h>
@@ -65,13 +66,13 @@ void init(char *dbf) {
         SQLite::Transaction transaction(db);
 
         db.exec(
-            "CREATE TABLE data (dId INTEGER PRIMARY KEY, value TEXT NOT NULL)");
-        db.exec("CREATE TABLE history (hId INTEGER PRIMARY KEY, value BLOB NOT "
-                "NULL, dId INTEGER NOT NULL, FOREIGN KEY(dId) REFERENCES "
-                "data(dId))");
+            "CREATE TABLE login (lId INTEGER PRIMARY KEY, value BLOB NOT NULL)");
         db.exec(
-            "CREATE VIRTUAL TABLE search USING FTS5 (value, tokenize='porter "
-            "unicode61', content='data', content_rowid='dId')");
+            "CREATE TABLE data (dId INTEGER PRIMARY KEY, lId INTEGER NOT NULL, value TEXT NOT NULL, FOREIGN KEY(lId) REFERENCES login(lId))");
+        db.exec(
+            "CREATE TABLE history (hId INTEGER PRIMARY KEY, dId INTEGER NOT NULL, value BLOB NOT NULL, FOREIGN KEY(dId) REFERENCES data(dId))");
+        db.exec(
+            "CREATE VIRTUAL TABLE search USING FTS5 (value, tokenize='porter unicode61', content='data', content_rowid='dId')");
 
         // Commit transaction
         transaction.commit();
@@ -140,6 +141,8 @@ SecByteBlock encrypt(SecByteBlock data, char *keyf) {
         hmac.Update(&buf[HASH_SIZE], SALT_SIZE + data.size());
         hmac.Final(hmac_hash);
         std::memcpy(&buf[0], hmac_hash, HASH_SIZE);
+        CryptoPP::SecureWipeBuffer(key, key.size());
+        CryptoPP::SecureWipeBuffer(hkdf_hash, hkdf_hash.size());
 
         return buf;
     } catch (const Exception &ex) {
@@ -180,6 +183,8 @@ SecByteBlock decrypt(SecByteBlock data, char *keyf) {
         if (hash != hmac_hash) {
             error_exit("[main] Wrong HMAC");
         }
+        CryptoPP::SecureWipeBuffer(key, key.size());
+        CryptoPP::SecureWipeBuffer(hkdf_hash, hkdf_hash.size());
 
         return buf;
     } catch (const Exception &ex) {
@@ -232,8 +237,9 @@ void show(char *dbf, char *keyf, char *dId) {
         // Begin transaction
         SQLite::Transaction transaction(db);
 
-        SQLite::Statement q{db, "SELECT value FROM history "
-                                "WHERE dId = ? ORDER BY hId DESC LIMIT 1"};
+        SQLite::Statement q{
+            db,
+            "SELECT value FROM history WHERE dId = ? ORDER BY hId DESC LIMIT 1"};
         q.bind(1, dId);
         while (q.executeStep()) {
             std::string encoded = q.getColumn(0);
@@ -308,8 +314,8 @@ void search(char *dbf, char *term) {
         // Begin transaction
         SQLite::Transaction transaction(db);
         SQLite::Statement q{
-            db, "select * from data where dId in (select rowid from search "
-                "where value match ?)"};
+            db,
+            "select * from data where dId in (select rowid from search where value match ?)"};
         q.bind(1, term);
         while (q.executeStep()) {
             uint32_t dId = (uint32_t)q.getColumn(0);
