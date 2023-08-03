@@ -429,7 +429,7 @@ void add(char *dbf, char *keyf, char *eId, char *inputf) {
     transaction.commit();
 }
 
-void show_pwd(char *dbf, char *keyf, char *eId) {
+void show_json(char *dbf, char *keyf, char *eId) {
     SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
     db.exec("PRAGMA foreign_keys = ON");
 
@@ -447,12 +447,7 @@ void show_pwd(char *dbf, char *keyf, char *eId) {
 
         std::string j =
             std::string(reinterpret_cast<const char *>(buf.data()), buf.size());
-        json js = json::parse(j);
-        std::cout << "username: " + js["username"].get<std::string>()
-                  << std::endl;
-        std::cout << "password: " + js["password"].get<std::string>()
-                  << std::endl;
-        std::cout << "note: " + js["note"].get<std::string>() << std::endl;
+        std::cout << j << std::endl;
     } else {
         error_exit("[show_pwd] Cannot find entry");
     }
@@ -504,6 +499,93 @@ void gen_otp(char *file) {
     o << j.dump(4) << std::endl;
 }
 
+void rebuild_search(char *dbf) {
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    db.exec("DROP TABLE IF EXISTS search");
+    db.exec(
+        "CREATE VIRTUAL TABLE search USING FTS5 (eId, name, tokenize='porter unicode61', content='entry', content_rowid='eId')");
+    db.exec("INSERT INTO search (eId, name) SELECT eId, name FROM entry");
+
+    // Commit transaction
+    transaction.commit();
+}
+
+void search(char *dbf, char *term) {
+    rebuild_search(dbf);
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+    SQLite::Statement q{
+        db,
+        "SELECT eId, uId, name FROM entry WHERE eId IN (SELECT eId FROM search WHERE name MATCH ?) ORDER BY uId ASC, eId ASC"};
+    q.bind(1, term);
+    int count = 0;
+    while (q.executeStep()) {
+        count++;
+        uint32_t eId = (uint32_t)q.getColumn(0);
+        uint32_t uId = (uint32_t)q.getColumn(1);
+        std::string entry_name = q.getColumn(2);
+
+        SQLite::Statement q_user{db, "SELECT name FROM user WHERE uId = ?"};
+        q_user.bind(1, uId);
+        std::cout << std::setw(5) << std::left << eId;
+        if (q_user.executeStep()) {
+            std::string user_name = q_user.getColumn(0);
+            std::cout << std::setw(10) << std::left << user_name;
+            std::cout << std::setw(20) << std::left << entry_name;
+        }
+
+        SQLite::Statement q_data{db, "SELECT dId FROM data WHERE eId = ?"};
+        q_data.bind(1, eId);
+        std::vector<uint32_t> dId;
+        while (q_data.executeStep()) {
+            dId.push_back((uint32_t)q_data.getColumn(0));
+        }
+        for (auto i : dId) {
+            std::cout << i << " ";
+        }
+        std::cout << std::endl;
+    }
+    if (count == 0) {
+        std::cout << "[search] Not found" << std::endl;
+    }
+
+    // Commit transaction
+    transaction.commit();
+}
+
+void show_otp(char *dbf, char *keyf, char *eId) {
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    SQLite::Statement q{
+        db, "SELECT value FROM data WHERE eId = ? ORDER BY dId DESC LIMIT 1"};
+    q.bind(1, eId);
+    if (q.executeStep()) {
+        std::string encoded = q.getColumn(0);
+        SecByteBlock sec_decoded = decode(encoded);
+        SecByteBlock key = read_key(keyf);
+        SecByteBlock buf = decrypt(sec_decoded, key);
+
+        std::string j =
+            std::string(reinterpret_cast<const char *>(buf.data()), buf.size());
+        json js = json::parse(j);
+        cotp_error_t err;
+        char *totp =
+            get_totp(js["otp"].get<std::string>().data(), 6, 30, SHA1, &err);
+        std::cout << totp << std::endl;
+    } else {
+        error_exit("[show_pwd] Cannot find entry");
+    }
+}
+
 int main(int argc, char *argv[]) {
     try {
         if (argc == 3 && strcmp(argv[1], "init") == 0) {
@@ -538,11 +620,11 @@ int main(int argc, char *argv[]) {
             // passpp add -db abc.db -k abc.key -eId eId -i abc.json
             add(argv[3], argv[5], argv[7], argv[9]);
 
-        } else if (argc == 8 && strcmp(argv[1], "show-pwd") == 0 &&
+        } else if (argc == 8 && strcmp(argv[1], "show-json") == 0 &&
                    strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
                    strcmp(argv[6], "-eId") == 0) {
-            // passpp show-pwd -db abc.db -k abc.key -eId eId
-            show_pwd(argv[3], argv[5], argv[7]);
+            // passpp show-json -db abc.db -k abc.key -eId eId
+            show_json(argv[3], argv[5], argv[7]);
 
         } else if (argc == 6 && strcmp(argv[1], "gen-login") == 0 &&
                    strcmp(argv[2], "-u") == 0 && strcmp(argv[4], "-o") == 0) {
@@ -553,6 +635,22 @@ int main(int argc, char *argv[]) {
                    strcmp(argv[2], "-o") == 0) {
             // passpp gen-otp -o def.json
             gen_otp(argv[3]);
+
+        } else if (argc == 4 && strcmp(argv[1], "rebuild-search") == 0 &&
+                   strcmp(argv[2], "-db") == 0) {
+            // passpp rebuild-search -db abc.db
+            rebuild_search(argv[3]);
+
+        } else if (argc == 6 && strcmp(argv[1], "search") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-t") == 0) {
+            // passpp search -db abc.db -t abc
+            search(argv[3], argv[5]);
+
+        } else if (argc == 8 && strcmp(argv[1], "show-otp") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
+                   strcmp(argv[6], "-eId") == 0) {
+            // passpp show-otp -db abc.db -k abc.key -eId eId
+            show_otp(argv[3], argv[5], argv[7]);
 
         } else {
             error_exit("[main] Wrong argv");
