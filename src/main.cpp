@@ -468,7 +468,7 @@ void gen_login(char *un, char *file) {
     o << j.dump(4) << std::endl;
 }
 
-void gen_otp(char *file) {
+void gen_totp(char *file) {
     json j;
     j["secret"] = "";
     j["created"] = utc_time();
@@ -648,10 +648,10 @@ int main(int argc, char *argv[]) {
             // passpp gen-login -u abc@def.com -o def.json
             gen_login(argv[3], argv[5]);
 
-        } else if (argc == 4 && strcmp(argv[1], "gen-otp") == 0 &&
+        } else if (argc == 4 && strcmp(argv[1], "gen-totp") == 0 &&
                    strcmp(argv[2], "-o") == 0) {
-            // passpp gen-otp -o def.json
-            gen_otp(argv[3]);
+            // passpp gen-totp -o def.json
+            gen_totp(argv[3]);
 
         } else if (argc == 4 && strcmp(argv[1], "rebuild-search") == 0 &&
                    strcmp(argv[2], "-db") == 0) {
