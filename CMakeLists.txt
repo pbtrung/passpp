@@ -18,4 +18,4 @@ set(JSON_BuildTests OFF CACHE INTERNAL "")
 add_subdirectory(vendors/json)
 
 add_executable(passpp src/main.cpp)
-target_link_libraries(passpp SQLiteCpp sqlite3 pthread dl cryptopp cotp nlohmann_json::nlohmann_json gcrypt)
+target_link_libraries(passpp SQLiteCpp sqlite3 pthread dl cryptopp cotp nlohmann_json::nlohmann_json argon2)
