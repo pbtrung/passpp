@@ -608,6 +608,9 @@ void show_otp(char *dbf, char *keyf, char *eId, char *len, char *time,
     } else {
         error_exit("[show_otp] Cannot find entry");
     }
+
+    // Commit transaction
+    transaction.commit();
 }
 
 int main(int argc, char *argv[]) {
