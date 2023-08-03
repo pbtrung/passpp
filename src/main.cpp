@@ -1,6 +1,6 @@
+#include <ctime>
 #include <fstream>
 #include <iostream>
-#include <ctime>
 #include <string>
 
 #include <stdlib.h>
@@ -436,7 +436,8 @@ void show_json(char *dbf, char *keyf, char *eId) {
 std::string utc_time() {
     std::time_t time = std::time({});
     char timeString[std::size("yyyy-mm-dd hh:mm:ss UTC")];
-    std::strftime(std::data(timeString), std::size(timeString), "%F %T UTC", std::gmtime(&time));
+    std::strftime(std::data(timeString), std::size(timeString), "%F %T UTC",
+                  std::gmtime(&time));
     return timeString;
 }
 
@@ -469,13 +470,15 @@ void gen_login(char *un, char *file) {
 
 void gen_otp(char *file) {
     json j;
-    j["otp"] = "";
+    j["secret"] = "";
     j["created"] = utc_time();
-    j["pad"] = "";
+    j["algo"] = 1;
+    j["period"] = 30;
+    j["digits"] = 6;
 
     std::string data = j.dump(4);
     if (data.size() < T3F_BLOCK_SIZE) {
-        SecByteBlock tmp(T3F_BLOCK_SIZE - 20 - data.size());
+        SecByteBlock tmp(T3F_BLOCK_SIZE - data.size());
         OS_GenerateRandomBlock(false, tmp, tmp.size());
         std::string pad;
         StringSource sss(tmp, tmp.size(), true,
