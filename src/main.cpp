@@ -1,4 +1,5 @@
-#include <ctime>
+#include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -9,20 +10,20 @@
 
 #include <SQLiteCpp/SQLiteCpp.h>
 
+#include <cryptopp/base32.h>
 #include <cryptopp/base64.h>
 #include <cryptopp/hkdf.h>
 #include <cryptopp/kalyna.h>
 #include <cryptopp/misc.h>
 #include <cryptopp/modes.h>
 #include <cryptopp/osrng.h>
+#include <cryptopp/sha.h>
 #include <cryptopp/sha3.h>
 #include <cryptopp/threefish.h>
 using namespace CryptoPP;
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
-
-#include <cotp.h>
 
 #include <argon2.h>
 
@@ -46,6 +47,102 @@ const unsigned int KLN_IV_SIZE = 64;
 const unsigned int T3F_BLOCK_SIZE = 128;
 const unsigned int HKDF_SIZE = T3F_KEY_SIZE + T3F_IV_SIZE + TWEAK_SIZE +
                                HASH_KEY_SIZE + KLN_KEY_SIZE + KLN_IV_SIZE;
+
+int truncate(SecByteBlock hmac, int digits) {
+    int offset = hmac[hmac.size() - 1] & 0x0f;
+
+    int bin_code =
+        ((hmac[offset] & 0x7f) << 24) | ((hmac[offset + 1] & 0xff) << 16) |
+        ((hmac[offset + 2] & 0xff) << 8) | ((hmac[offset + 3] & 0xff));
+
+    long long int DIGITS_POWER[] = {1,         10,         100,        1000,
+                                    10000,     100000,     1000000,    10000000,
+                                    100000000, 1000000000, 10000000000};
+    int token = (int)(bin_code % DIGITS_POWER[digits]);
+    return token;
+}
+
+SecByteBlock finalize(int digits, int tk) {
+    SecByteBlock token(digits + 1);
+    char fmt[6];
+    sprintf(fmt, "%%0%dd", digits);
+    snprintf((char *)token.data(), digits + 1, fmt, tk);
+    return token;
+}
+
+std::string normalize_secret(SecByteBlock K) {
+    std::string j =
+        std::string(reinterpret_cast<const char *>(K.data()), K.size());
+    j.erase(std::remove_if(j.begin(), j.end(), isspace), j.end());
+    std::transform(j.begin(), j.end(), j.begin(), ::toupper);
+    return j;
+}
+
+SecByteBlock compute_hmac(SecByteBlock K, uint64_t counter, int algo) {
+    std::string normalized_K = normalize_secret(K);
+
+    size_t key_size = (size_t)((normalized_K.size() + 1.6 - 1) / 1.6);
+
+    int lookup[256];
+    const byte ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    Base64Decoder::InitializeDecodingLookupArray(lookup, ALPHABET, 32, true);
+    Base32Decoder decoder;
+    AlgorithmParameters params =
+        MakeParameters(Name::DecodingLookupArray(), (const int *)lookup);
+    decoder.IsolatedInitialize(params);
+
+    SecByteBlock key(key_size);
+    decoder.Attach(new ArraySink(key, key.size()));
+    decoder.Put((byte *)normalized_K.data(), normalized_K.size());
+    decoder.MessageEnd();
+
+    const size_t counter_byte_size = sizeof(counter);
+    byte counter_byte[counter_byte_size];
+    // Big-endian representation
+    for (size_t i = 0; i < counter_byte_size; ++i) {
+        counter_byte[counter_byte_size - 1 - i] =
+            static_cast<byte>((counter >> (8 * i)) & 0xFF);
+    }
+
+    SecByteBlock mac;
+    if (algo == 1) {
+        mac.CleanNew(HMAC<CryptoPP::SHA1>::DIGESTSIZE);
+        HMAC<CryptoPP::SHA1> h1(key, key.size());
+        h1.Update(counter_byte, counter_byte_size);
+        h1.Final(mac);
+    } else if (algo == 2) {
+        mac.CleanNew(HMAC<CryptoPP::SHA256>::DIGESTSIZE);
+        HMAC<CryptoPP::SHA256> h256(key, key.size());
+        h256.Update(counter_byte, counter_byte_size);
+        h256.Final(mac);
+    } else if (algo == 3) {
+        mac.CleanNew(HMAC<CryptoPP::SHA512>::DIGESTSIZE);
+        HMAC<CryptoPP::SHA512> h512(key, key.size());
+        h512.Update(counter_byte, counter_byte_size);
+        h512.Final(mac);
+    }
+
+    return mac;
+}
+
+SecByteBlock get_hotp(SecByteBlock secret, uint64_t counter, int digits,
+                      int algo) {
+    SecByteBlock hmac = compute_hmac(secret, counter, algo);
+    int tk = truncate(hmac, digits);
+    return finalize(digits, tk);
+}
+
+SecByteBlock get_totp_at(SecByteBlock secret, uint64_t current_time, int digits,
+                         int period, int algo) {
+    uint64_t counter = current_time / period;
+    SecByteBlock totp = get_hotp(secret, counter, digits, algo);
+    return totp;
+}
+
+SecByteBlock get_totp(SecByteBlock secret, int digits, int period, int algo) {
+    uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
+    return get_totp_at(secret, current_time, digits, period, algo);
+}
 
 static void error_exit(std::string msg) {
     std::cerr << msg << std::endl;
@@ -549,8 +646,7 @@ void search(char *dbf, char *term) {
     transaction.commit();
 }
 
-void show_otp(char *dbf, char *keyf, char *eId, char *len, char *time,
-              char *algo) {
+void show_totp(char *dbf, char *keyf, char *eId) {
     SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
     db.exec("PRAGMA foreign_keys = ON");
 
@@ -560,7 +656,6 @@ void show_otp(char *dbf, char *keyf, char *eId, char *len, char *time,
     SQLite::Statement q{
         db, "SELECT value FROM data WHERE eId = ? ORDER BY dId DESC LIMIT 1"};
     q.bind(1, eId);
-    char *totp = NULL;
     if (q.executeStep()) {
         std::string encoded = q.getColumn(0);
         SecByteBlock sec_decoded = decode(encoded);
@@ -570,23 +665,14 @@ void show_otp(char *dbf, char *keyf, char *eId, char *len, char *time,
         std::string j =
             std::string(reinterpret_cast<const char *>(buf.data()), buf.size());
         json js = json::parse(j);
-        cotp_error_t err;
-        long len_num = strtol(len, NULL, 10);
-        long time_num = strtol(time, NULL, 10);
-        switch (algo[0]) {
-        case '1':
-            totp = get_totp(js["otp"].get<std::string>().data(), len_num,
-                            time_num, SHA1, &err);
-            break;
-        case '2':
-            totp = get_totp(js["otp"].get<std::string>().data(), len_num,
-                            time_num, SHA256, &err);
-            break;
-        case '3':
-            totp = get_totp(js["otp"].get<std::string>().data(), len_num,
-                            time_num, SHA512, &err);
-            break;
-        }
+
+        int digits = js["digits"].get<int>();
+        int period = js["period"].get<int>();
+        int algo = js["algo"].get<int>();
+        std::string secret = js["secret"].get<std::string>();
+        SecByteBlock sec_sbb(reinterpret_cast<const byte *>(secret.data()), secret.size());
+
+        SecByteBlock totp = get_totp(sec_sbb, digits, period, algo);
 
         SQLite::Statement q_entry{db, "SELECT name FROM entry WHERE eId = ?"};
         q_entry.bind(1, eId);
@@ -594,13 +680,24 @@ void show_otp(char *dbf, char *keyf, char *eId, char *len, char *time,
             std::string entry_name = q_entry.getColumn(0);
             std::cout << entry_name << "  ";
         }
-        std::cout << totp << std::endl;
+        std::cout << (char *)totp.data() << std::endl;
+        CryptoPP::SecureWipeBuffer(j.data(), j.size());
+        CryptoPP::SecureWipeBuffer(secret.data(), secret.size());
     } else {
         error_exit("[show_otp] Cannot find entry");
     }
 
     // Commit transaction
     transaction.commit();
+}
+
+void test_totp(char *sec) {
+    SecByteBlock sec_sbb(reinterpret_cast<const byte *>(sec), strlen(sec));
+    int digits = 6;
+    int period = 30;
+    int algo = 1;
+    SecByteBlock totp = get_totp(sec_sbb, digits, period, algo);
+    std::cout << (char *)totp.data() << std::endl;
 }
 
 int main(int argc, char *argv[]) {
@@ -663,11 +760,16 @@ int main(int argc, char *argv[]) {
             // passpp search -db abc.db -t abc
             search(argv[3], argv[5]);
 
-        } else if (argc == 12 && strcmp(argv[1], "show-otp") == 0 &&
+        } else if (argc == 8 && strcmp(argv[1], "show-totp") == 0 &&
                    strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-k") == 0 &&
-                   strcmp(argv[6], "-eId") == 0 && strcmp(argv[8], "-p") == 0) {
-            // passpp show-otp -db abc.db -k abc.key -eId eId -p len time algo
-            show_otp(argv[3], argv[5], argv[7], argv[9], argv[10], argv[11]);
+                   strcmp(argv[6], "-eId") == 0) {
+            // passpp show-totp -db abc.db -k abc.key -eId eId
+            show_totp(argv[3], argv[5], argv[7]);
+
+        } else if (argc == 4 && strcmp(argv[1], "test-totp") == 0 &&
+                   strcmp(argv[2], "-s") == 0) {
+            // passpp test-totp -s sec
+            test_totp(argv[3]);
 
         } else {
             error_exit("[main] Wrong argv");

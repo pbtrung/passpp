@@ -1,6 +1,5 @@
 #!/bin/bash
 
-cp CMakeLists.libcotp.macOS.txt vendors/libcotp/CMakeLists.txt
 cp CMakeLists.sqlite3.macOS.txt vendors/SQLiteCpp/sqlite3/CMakeLists.txt
 
 # new build
@@ -17,5 +16,4 @@ elif [ "$1" == "con" ]; then
     cd ../..
 fi
 
-cp CMakeLists.libcotp.bak.txt vendors/libcotp/CMakeLists.txt
 cp CMakeLists.sqlite3.bak.txt vendors/SQLiteCpp/sqlite3/CMakeLists.txt
