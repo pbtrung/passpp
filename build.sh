@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cp CMakeLists.sqlite3.macOS.txt vendors/SQLiteCpp/sqlite3/CMakeLists.txt
+cp CMakeLists.sqlite3.txt vendors/SQLiteCpp/sqlite3/CMakeLists.txt
 
 # new build
 if [ "$1" == "new" ]; then
