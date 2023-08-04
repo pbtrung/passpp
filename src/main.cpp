@@ -602,7 +602,6 @@ void rebuild_search(char *dbf) {
 }
 
 void search(char *dbf, char *term) {
-    rebuild_search(dbf);
     SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
 
     // Begin transaction
