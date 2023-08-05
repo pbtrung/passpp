@@ -623,7 +623,7 @@ void search(char *dbf, char *term) {
         if (q_user.executeStep()) {
             std::string user_name = q_user.getColumn(0);
             std::cout << std::setw(10) << std::left << user_name;
-            std::cout << std::setw(20) << std::left << entry_name;
+            std::cout << std::setw(30) << std::left << entry_name;
         }
 
         SQLite::Statement q_data{db, "SELECT dId FROM data WHERE eId = ?"};
