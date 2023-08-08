@@ -15,5 +15,7 @@ add_subdirectory(vendors/cryptopp-cmake)
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 add_subdirectory(vendors/json)
 
+add_executable(crypt src/crypt.cpp)
+target_link_libraries(crypt cryptopp)
 add_executable(passpp src/main.cpp)
 target_link_libraries(passpp SQLiteCpp sqlite3 pthread dl cryptopp nlohmann_json::nlohmann_json argon2)

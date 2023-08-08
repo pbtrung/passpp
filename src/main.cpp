@@ -669,7 +669,8 @@ void show_totp(char *dbf, char *keyf, char *eId) {
         int period = js["period"].get<int>();
         int algo = js["algo"].get<int>();
         std::string secret = js["secret"].get<std::string>();
-        SecByteBlock sec_sbb(reinterpret_cast<const byte *>(secret.data()), secret.size());
+        SecByteBlock sec_sbb(reinterpret_cast<const byte *>(secret.data()),
+                             secret.size());
 
         SecByteBlock totp = get_totp(sec_sbb, digits, period, algo);
 
