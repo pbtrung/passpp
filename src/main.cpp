@@ -701,10 +701,12 @@ void del_max(char *dbf, char *eId) {
     SQLite::Statement q{
         db, "DELETE FROM data WHERE eId = ? and dId < (SELECT MAX(dId) FROM data WHERE eId = ?)"};
     q.bind(1, eId);
-    q.exec();
+    int nr = q.exec();
 
     // Commit transaction
     transaction.commit();
+
+    std::cout << "Change " << nr << " row(s)" << std::endl;
 }
 
 void del_eid_did(char *dbf, char *eId, char *dId) {
@@ -718,10 +720,12 @@ void del_eid_did(char *dbf, char *eId, char *dId) {
         db, "DELETE FROM data WHERE eId = ? and dId = ?"};
     q.bind(1, eId);
     q.bind(2, dId);
-    q.exec();
+    int nr = q.exec();
 
     // Commit transaction
     transaction.commit();
+
+    std::cout << "Change " << nr << " row(s)" << std::endl;
 }
 
 void test_totp(char *sec) {
@@ -801,12 +805,12 @@ int main(int argc, char *argv[]) {
 
         } else if (argc == 6 && strcmp(argv[1], "del") == 0 &&
                    strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-eId") == 0) {
-            // passpp show-totp -db abc.db -k abc.key -eId eId
+            // passpp del -db abc.db -eId eId
             del_max(argv[3], argv[5]);
 
         } else if (argc == 8 && strcmp(argv[1], "del") == 0 &&
                    strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-eId") == 0 && strcmp(argv[6], "-dId") == 0) {
-            // passpp show-totp -db abc.db -k abc.key -eId eId
+            // passpp del -db abc.db -eId eId -dId dId
             del_eid_did(argv[3], argv[5], argv[7]);
 
         } else if (argc == 4 && strcmp(argv[1], "test-totp") == 0 &&
