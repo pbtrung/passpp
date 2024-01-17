@@ -691,6 +691,39 @@ void show_totp(char *dbf, char *keyf, char *eId) {
     transaction.commit();
 }
 
+void del_max(char *dbf, char *eId) {
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    SQLite::Statement q{
+        db, "DELETE FROM data WHERE eId = ? and dId < (SELECT MAX(dId) FROM data WHERE eId = ?)"};
+    q.bind(1, eId);
+    q.exec();
+
+    // Commit transaction
+    transaction.commit();
+}
+
+void del_eid_did(char *dbf, char *eId, char *dId) {
+    SQLite::Database db(dbf, SQLite::OPEN_READWRITE);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    // Begin transaction
+    SQLite::Transaction transaction(db);
+
+    SQLite::Statement q{
+        db, "DELETE FROM data WHERE eId = ? and dId = ?"};
+    q.bind(1, eId);
+    q.bind(2, dId);
+    q.exec();
+
+    // Commit transaction
+    transaction.commit();
+}
+
 void test_totp(char *sec) {
     SecByteBlock sec_sbb(reinterpret_cast<const byte *>(sec), strlen(sec));
     int digits = 6;
@@ -765,6 +798,16 @@ int main(int argc, char *argv[]) {
                    strcmp(argv[6], "-eId") == 0) {
             // passpp show-totp -db abc.db -k abc.key -eId eId
             show_totp(argv[3], argv[5], argv[7]);
+
+        } else if (argc == 6 && strcmp(argv[1], "del") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-eId") == 0) {
+            // passpp show-totp -db abc.db -k abc.key -eId eId
+            del_max(argv[3], argv[5]);
+
+        } else if (argc == 8 && strcmp(argv[1], "del") == 0 &&
+                   strcmp(argv[2], "-db") == 0 && strcmp(argv[4], "-eId") == 0 && strcmp(argv[6], "-dId") == 0) {
+            // passpp show-totp -db abc.db -k abc.key -eId eId
+            del_eid_did(argv[3], argv[5], argv[7]);
 
         } else if (argc == 4 && strcmp(argv[1], "test-totp") == 0 &&
                    strcmp(argv[2], "-s") == 0) {
