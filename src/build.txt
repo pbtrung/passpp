@@ -1,0 +1,2 @@
+g++ -O3 -std=c++17 -lcryptopp main2.cpp -o passpp2
+
